@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 数字地球仪 (视觉改良版)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* --- 全局样式 --- */
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; color: white; }
+        #canvas-container { width: 100vw; height: 100vh; cursor: grab; }
+        #canvas-container:active { cursor: grabbing; }
+
+        /* UI 顶栏 */
+        .top-bar {
+            position: absolute; top: 20px; left: 20px; right: 20px;
+            display: flex; justify-content: space-between; align-items: flex-start;
+            pointer-events: none; 
+        }
+        .btn-group { display: flex; gap: 15px; pointer-events: auto; }
+        
+        .glass-btn {
+            background: rgba(0, 20, 40, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 210, 255, 0.3);
+            color: #00d2ff;
+            padding: 10px 20px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex; align-items: center; gap: 8px;
+            transition: all 0.3s;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+        .glass-btn:hover { background: rgba(0, 210, 255, 0.2); transform: translateY(2px); box-shadow: 0 0 20px rgba(0, 210, 255, 0.4); color: white; }
+        
+        /* AI 面板 */
+        .ai-panel {
+            position: fixed; top: 0; right: -420px; width: 380px; height: 100%;
+            background: rgba(10, 15, 25, 0.95);
+            backdrop-filter: blur(20px);
+            border-left: 1px solid rgba(0, 210, 255, 0.2);
+            box-shadow: -10px 0 30px rgba(0,0,0,0.8);
+            transition: right 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+            padding: 25px; box-sizing: border-box;
+            display: flex; flex-direction: column; z-index: 100;
+        }
+        .ai-panel.open { right: 0; }
+
+        .panel-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; margin-bottom: 15px; }
+        .location-title { font-size: 26px; font-weight: bold; background: linear-gradient(45deg, #00d2ff, #ffffff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .close-btn { background: none; border: none; color: #666; font-size: 24px; cursor: pointer; transition: 0.3s; }
+        .close-btn:hover { color: white; }
+
+        .chat-area { flex: 1; overflow-y: auto; margin-bottom: 15px; padding-right: 5px; display: flex; flex-direction: column; gap: 12px; font-size: 15px; line-height: 1.6; }
+        .chat-area::-webkit-scrollbar { width: 6px; }
+        .chat-area::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        
+        .msg { padding: 12px 16px; border-radius: 12px; max-width: 90%; animation: fadeIn 0.3s; word-wrap: break-word; }
+        .msg-ai { background: rgba(255,255,255,0.08); align-self: flex-start; border-bottom-left-radius: 2px; border: 1px solid rgba(255,255,255,0.05); }
+        .msg-user { background: linear-gradient(135deg, #006699, #004466); align-self: flex-end; border-bottom-right-radius: 2px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+
+        .input-area { display: flex; gap: 10px; }
+        .chat-input { flex: 1; background: rgba(0,0,0,0.5); border: 1px solid #444; border-radius: 8px; padding: 12px; color: white; outline: none; }
+        .chat-input:focus { border-color: #00d2ff; }
+        .send-btn { background: #00d2ff; color: #000; border: none; border-radius: 8px; width: 45px; cursor: pointer; transition: 0.3s; }
+        .send-btn:hover { background: #33eeff; }
+
+        /* 模态框 */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 200; opacity: 0; pointer-events: none; transition: 0.3s; backdrop-filter: blur(5px); }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
+        .modal { background: #111; border: 1px solid #00d2ff; width: 90%; max-width: 500px; padding: 30px; border-radius: 15px; text-align: center; box-shadow: 0 0 50px rgba(0, 210, 255, 0.2); transform: scale(0.9); transition: 0.3s; }
+        .modal-overlay.active .modal { transform: scale(1); }
+        
+        /* 设置面板 */
+        .settings-group { margin-bottom: 15px; text-align: left; }
+        .settings-group label { display: block; color: #888; margin-bottom: 5px; font-size: 12px; }
+        .settings-input { width: 100%; background: #222; border: 1px solid #444; color: white; padding: 8px; border-radius: 4px; box-sizing: border-box; }
+
+        /* 测验 */
+        .quiz-options { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+        .quiz-btn { background: #222; border: 1px solid #444; color: #ddd; padding: 12px; border-radius: 8px; cursor: pointer; text-align: left; transition: 0.2s; }
+        .quiz-btn:hover { background: #333; border-color: #00d2ff; }
+        .quiz-btn.correct { background: #1b5e20; border-color: #4caf50; }
+        .quiz-btn.wrong { background: #b71c1c; border-color: #f44336; }
+
+        .loading-dots:after { content: '.'; animation: dots 1.5s infinite; }
+        @keyframes dots { 0%{content:'.'} 33%{content:'..'} 66%{content:'...'} }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <!-- 顶部 UI -->
+    <div class="top-bar">
+        <div style="pointer-events: auto;">
+            <h1 style="margin: 0; font-size: 24px; font-weight: 800; letter-spacing: 1px; color: white; text-shadow: 0 0 10px #00d2ff;">
+                <i class="fa-solid fa-earth-americas" style="color: #00d2ff;"></i> AI 地球探索
+            </h1>
+            <p style="margin: 5px 0 0 0; font-size: 12px; color: #aaa;">双击标记点 · 探索世界</p>
+        </div>
+        <div class="btn-group">
+            <button class="glass-btn" onclick="getEarthFact()"><i class="fa-solid fa-lightbulb"></i> 地球冷知识</button>
+            <button class="glass-btn" onclick="openSettings()"><i class="fa-solid fa-gear"></i> API 设置</button>
+        </div>
+    </div>
+
+    <!-- AI 侧边栏 -->
+    <div class="ai-panel" id="aiPanel">
+        <div class="panel-header">
+            <div class="location-title" id="panelTitle">Location</div>
+            <button class="close-btn" onclick="closePanel()">&times;</button>
+        </div>
+        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <button class="glass-btn" style="flex:1; font-size: 12px; padding: 8px;" onclick="startQuiz()">
+                <i class="fa-solid fa-graduation-cap"></i> 知识挑战
+            </button>
+            <button class="glass-btn" style="flex:1; font-size: 12px; padding: 8px;" id="voiceBtn" onclick="toggleVoice()">
+                <i class="fa-solid fa-volume-high"></i> 朗读介绍
+            </button>
+        </div>
+        
+        <div id="quizArea" style="display: none; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #00d2ff;">
+            <div id="quizQuestion" style="font-weight: bold; margin-bottom: 10px; color: #ffd700;">Loading...</div>
+            <div id="quizOptions" class="quiz-options"></div>
+        </div>
+
+        <div class="chat-area" id="chatArea"></div>
+        <div class="input-area">
+            <input type="text" class="chat-input" id="chatInput" placeholder="问它关于这里的问题..." onkeypress="handleKeyPress(event)">
+            <button class="send-btn" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
+    </div>
+
+    <!-- 模态框 -->
+    <div class="modal-overlay" id="factModal">
+        <div class="modal">
+            <i class="fa-solid fa-quote-left" style="font-size: 30px; color: #00d2ff; margin-bottom: 20px;"></i>
+            <div id="factContent" style="font-size: 18px; line-height: 1.6; margin-bottom: 30px;"></div>
+            <button class="glass-btn" style="margin: 0 auto;" onclick="document.getElementById('factModal').classList.remove('active')">知道啦</button>
+        </div>
+    </div>
+
+    <!-- 设置弹窗 -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <h2 style="margin-top: 0;">DeepSeek 设置</h2>
+            <div class="settings-group">
+                <label>API Key (已内置):</label>
+                <input type="password" id="apiKeyInput" class="settings-input" placeholder="sk-..." value="sk-bf28c6d3ddfb4b88bc7b8d2b6efa0754">
+            </div>
+            <div class="settings-group">
+                <label>接口地址 (中转/代理):</label>
+                <input type="text" id="apiUrlInput" class="settings-input" placeholder="https://api.deepseek.com">
+            </div>
+            <div style="font-size: 12px; color: #eab308; text-align: left; margin-bottom: 20px;">
+                <i class="fa-solid fa-triangle-exclamation"></i> <b>提示：</b> 如果直连官方地址报错，请填入支持跨域的中转地址。
+            </div>
+            <button class="glass-btn" style="margin: 0 auto;" onclick="saveSettings()">保存配置</button>
+        </div>
+    </div>
+
+    <script>
+        // === 1. 全局配置 ===
+        const config = {
+            apiKey: 'sk-bf28c6d3ddfb4b88bc7b8d2b6efa0754', // 硬编码 Key
+            apiUrl: localStorage.getItem('earth_ds_url') || 'https://api.deepseek.com'
+        };
+
+        const locations = [
+            { name: "亚洲", lat: 34.0479, lon: 100.6197, color: "#ff5252", type: "continent" },
+            { name: "欧洲", lat: 54.5260, lon: 15.2551, color: "#ff5252", type: "continent" },
+            { name: "非洲", lat: 8.7832, lon: 34.5085, color: "#ff5252", type: "continent" },
+            { name: "北美洲", lat: 54.5260, lon: -105.2551, color: "#ff5252", type: "continent" },
+            { name: "南美洲", lat: -8.7832, lon: -55.4915, color: "#ff5252", type: "continent" },
+            { name: "大洋洲", lat: -25.2744, lon: 133.7751, color: "#ff5252", type: "continent" },
+            { name: "南极洲", lat: -82.8628, lon: 135.0000, color: "#ff5252", type: "continent" },
+            { name: "西兰蒂亚", lat: -40.0, lon: 170.0, color: "#ffd700", type: "continent" },
+            { name: "太平洋", lat: 0, lon: -160, color: "#00d2ff", type: "ocean" },
+            { name: "大西洋", lat: 0, lon: -30, color: "#00d2ff", type: "ocean" },
+            { name: "印度洋", lat: -20, lon: 80, color: "#00d2ff", type: "ocean" },
+            { name: "北冰洋", lat: 90, lon: 0, color: "#00d2ff", type: "ocean" },
+            { name: "南大洋", lat: -60, lon: 0, color: "#00d2ff", type: "ocean" }
+        ];
+
+        // === 2. Three.js 3D 场景 ===
+        let scene, camera, renderer, earth, controls;
+        const markers = [];
+
+        function init3D() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020205); // 深空黑略带蓝
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 25;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.rotateSpeed = 0.5;
+            controls.minDistance = 12;
+            controls.maxDistance = 50;
+
+            // --- 灯光优化 (消除奇怪光斑) ---
+            // 1. 增强环境光，让地球整体变亮，减少死黑
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+            scene.add(ambientLight);
+
+            // 2. 使用半球光模拟天光，更自然
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+            hemiLight.position.set(0, 20, 0);
+            scene.add(hemiLight);
+
+            // 3. 主光源，模拟太阳，但强度适中
+            const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            sunLight.position.set(50, 30, 50);
+            scene.add(sunLight);
+
+            // --- 创建地球 ---
+            const geometry = new THREE.SphereGeometry(10, 64, 64);
+            const loader = new THREE.TextureLoader();
+            
+            // 材质优化：大幅降低高光(specular)和光泽度(shininess)
+            // 这样就不会有那个“油光锃亮”的奇怪光斑了
+            const material = new THREE.MeshPhongMaterial({
+                map: loader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg'),
+                bumpMap: loader.load('https://unpkg.com/three-globe/example/img/earth-topology.png'),
+                bumpScale: 0.05,
+                specularMap: loader.load('https://unpkg.com/three-globe/example/img/earth-water.png'),
+                specular: new THREE.Color(0x222222), // 很暗的灰色，几乎不反光
+                shininess: 5 // 很低的光泽度，接近哑光
+            });
+            
+            earth = new THREE.Mesh(geometry, material);
+            scene.add(earth);
+
+            // 大气层
+            const atmosGeo = new THREE.SphereGeometry(10.2, 64, 64);
+            const atmosMat = new THREE.MeshPhongMaterial({
+                color: 0x00aaff,
+                transparent: true,
+                opacity: 0.15,
+                side: THREE.BackSide,
+                blending: THREE.AdditiveBlending
+            });
+            const atmosphere = new THREE.Mesh(atmosGeo, atmosMat);
+            scene.add(atmosphere);
+
+            addStars();
+            addMarkers();
+
+            window.addEventListener('resize', onWindowResize, false);
+            renderer.domElement.addEventListener('dblclick', onMouseClick, false);
+
+            animate();
+        }
+
+        function addStars() {
+            const starGeo = new THREE.BufferGeometry();
+            const starCount = 1500;
+            const posArray = new Float32Array(starCount * 3);
+            for(let i=0; i<starCount * 3; i++) {
+                posArray[i] = (Math.random() - 0.5) * 200;
+            }
+            starGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            const starMat = new THREE.PointsMaterial({color:0xaaaaaa, size:0.15, transparent: true, opacity: 0.8});
+            const stars = new THREE.Points(starGeo, starMat);
+            scene.add(stars);
+        }
+
+        function latLonToVector3(lat, lon, radius) {
+            const phi = (90 - lat) * (Math.PI / 180);
+            const theta = (lon + 180) * (Math.PI / 180);
+            const x = -(radius * Math.sin(phi) * Math.cos(theta));
+            const z = (radius * Math.sin(phi) * Math.sin(theta));
+            const y = (radius * Math.cos(phi));
+            return new THREE.Vector3(x, y, z);
+        }
+
+        function addMarkers() {
+            const radius = 10;
+            locations.forEach(loc => {
+                const pos = latLonToVector3(loc.lat, loc.lon, radius);
+                const markerGeo = new THREE.SphereGeometry(0.15, 16, 16);
+                const markerMat = new THREE.MeshBasicMaterial({ color: loc.color });
+                const marker = new THREE.Mesh(markerGeo, markerMat);
+                marker.position.copy(pos);
+                marker.userData = loc;
+                
+                const ringGeo = new THREE.RingGeometry(0.2, 0.25, 32);
+                const ringMat = new THREE.MeshBasicMaterial({ color: loc.color, side: THREE.DoubleSide, transparent: true });
+                const ring = new THREE.Mesh(ringGeo, ringMat);
+                ring.lookAt(pos.clone().multiplyScalar(2));
+                marker.add(ring);
+
+                earth.add(marker);
+                markers.push(marker);
+            });
+        }
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        function onMouseClick(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(markers, false);
+            if (intersects.length > 0) {
+                const selected = intersects[0].object.userData;
+                openPanel(selected.name, selected.type);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            earth.rotation.y += 0.0005;
+            markers.forEach(m => {
+                const ring = m.children[0];
+                const s = 1 + Math.sin(Date.now() * 0.003) * 0.3;
+                ring.scale.set(s, s, s);
+            });
+            renderer.render(scene, camera);
+        }
+
+        // === 3. AI 交互逻辑 (DeepSeek) ===
+        let currentLocation = "";
+        let currentType = "";
+        let currentIntro = "";
+        let isSpeaking = false;
+
+        function openPanel(name, type) {
+            currentLocation = name;
+            currentType = type;
+            document.getElementById('panelTitle').textContent = name;
+            document.getElementById('aiPanel').classList.add('open');
+            document.getElementById('chatArea').innerHTML = '';
+            document.getElementById('quizArea').style.display = 'none';
+            window.speechSynthesis.cancel();
+            isSpeaking = false;
+            generateIntro();
+        }
+
+        function closePanel() {
+            document.getElementById('aiPanel').classList.remove('open');
+            window.speechSynthesis.cancel();
+        }
+
+        async function callDeepSeek(prompt, systemText = "", jsonMode = false) {
+            if(!config.apiKey) return "⚠️ 请先点击顶部的【API 设置】填入您的 Key";
+
+            const url = `${config.apiUrl}/chat/completions`;
+            const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` };
+            const body = {
+                model: "deepseek-chat",
+                messages: [{ role: "system", content: systemText }, { role: "user", content: prompt }],
+                stream: false
+            };
+            if(jsonMode) body.response_format = { type: "json_object" };
+
+            try {
+                const res = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body) });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    const msg = err.error?.message || res.statusText;
+                    if (res.status === 402) return "❌ 余额不足 (402)。您的 DeepSeek 账户需要充值。";
+                    return `⚠️ API Error: ${msg}`;
+                }
+                const data = await res.json();
+                return data.choices[0].message.content;
+            } catch(e) {
+                return "📡 网络连接失败。\nDeepSeek 官方接口不支持网页直接调用(CORS)。\n请在【设置】中填入支持跨域的中转地址。";
+            }
+        }
+
+        async function generateIntro() {
+            addMsg('ai', '<span class="loading-dots">DeepSeek 正在思考</span>');
+            const typeDesc = currentType === 'continent' ? '大洲' : '大洋';
+            const sys = `你现在是地球上的【${currentLocation}】（${typeDesc}）。请用第一人称做一个简短有趣的自我介绍（100字以内）。`;
+            const text = await callDeepSeek("打个招呼", sys);
+            currentIntro = text;
+            const chatArea = document.getElementById('chatArea');
+            if (chatArea.lastChild.innerHTML.includes('loading')) chatArea.removeChild(chatArea.lastChild);
+            addMsg('ai', text);
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if(!text) return;
+            addMsg('user', text);
+            input.value = '';
+            const loadDiv = document.createElement('div');
+            loadDiv.className = 'msg msg-ai loading-dots';
+            document.getElementById('chatArea').appendChild(loadDiv);
+            const sys = `你现在是${currentLocation}。请保持第一人称人设回答。`;
+            const res = await callDeepSeek(text, sys);
+            document.getElementById('chatArea').removeChild(loadDiv);
+            addMsg('ai', res);
+        }
+
+        async function startQuiz() {
+            const quizArea = document.getElementById('quizArea');
+            quizArea.style.display = 'block';
+            document.getElementById('quizQuestion').textContent = '正在出题...';
+            document.getElementById('quizOptions').innerHTML = '';
+            const prompt = `生成一道关于${currentLocation}的单项选择题。JSON格式：{"q":"问题","o":["A","B","C"],"a":0}`;
+            try {
+                let res = await callDeepSeek(prompt, "你是一个JSON生成器", true);
+                res = res.replace(/```json/g, '').replace(/```/g, '').trim();
+                const data = JSON.parse(res);
+                document.getElementById('quizQuestion').textContent = data.q;
+                data.o.forEach((opt, idx) => {
+                    const btn = document.createElement('div');
+                    btn.className = 'quiz-btn';
+                    btn.textContent = opt;
+                    btn.onclick = () => {
+                        if(idx === data.a) { btn.classList.add('correct'); btn.innerHTML += ' ✅'; } 
+                        else { btn.classList.add('wrong'); document.querySelectorAll('.quiz-btn')[data.a].classList.add('correct'); }
+                        document.querySelectorAll('.quiz-btn').forEach(b => b.onclick = null);
+                    };
+                    document.getElementById('quizOptions').appendChild(btn);
+                });
+            } catch(e) { document.getElementById('quizQuestion').textContent = '出题失败，请检查网络/余额'; }
+        }
+
+        function toggleVoice() {
+            if(!currentIntro) return;
+            if(isSpeaking) { window.speechSynthesis.cancel(); isSpeaking = false; } 
+            else {
+                const u = new SpeechSynthesisUtterance(currentIntro);
+                u.lang = 'zh-CN';
+                u.onend = () => isSpeaking = false;
+                window.speechSynthesis.speak(u);
+                isSpeaking = true;
+            }
+        }
+
+        async function getEarthFact() {
+            if(!config.apiKey) { openSettings(); return; }
+            const modal = document.getElementById('factModal');
+            const content = document.getElementById('factContent');
+            modal.classList.add('active');
+            content.innerHTML = '<span class="loading-dots">DeepSeek 正在检索...</span>';
+            const res = await callDeepSeek("告诉我一个关于地球地理的惊人冷知识，简短一点。");
+            content.innerHTML = res;
+        }
+
+        function addMsg(type, html) {
+            const div = document.createElement('div');
+            div.className = `msg msg-${type}`;
+            div.innerHTML = html;
+            const area = document.getElementById('chatArea');
+            area.appendChild(div);
+            area.scrollTop = area.scrollHeight;
+        }
+        
+        function handleKeyPress(e) { if(e.key === 'Enter') sendMessage(); }
+        
+        function openSettings() { document.getElementById('settingsModal').classList.add('active'); document.getElementById('apiKeyInput').value = config.apiKey; }
+        function saveSettings() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            let url = document.getElementById('apiUrlInput').value.trim();
+            url = url.replace(/\/$/, ""); 
+            if(!key) { alert("Key 不能为空"); return; }
+            config.apiKey = key;
+            config.apiUrl = url;
+            localStorage.setItem('earth_apiKey', config.apiKey);
+            localStorage.setItem('earth_ds_url', config.apiUrl);
+            document.getElementById('settingsModal').classList.remove('active');
+            alert("设置已保存");
+        }
+
+        init3D();
+        if(!config.apiKey) setTimeout(() => { openSettings(); }, 1000);
+    </script>
+</body>
+</html>
